@@ -1,0 +1,170 @@
+---
+title: "Machine Learning Assigment"
+author: "Bassell Deeb"
+date: "27 Feb 2016"
+output: html_document
+---
+
+#Practical Machine Learning
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+#Data
+The training data for this project are available here: [https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv]
+
+The test data are available here: [https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv]
+
+The data for this project come from this source: [http://groupware.les.inf.puc-rio.br/har]. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+#What you should submit
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+Your submission should consist of a link to a Github repo with your R markdown and compiled HTML file describing your analysis. Please constrain the text of the writeup to < 2000 words and the number of figures to be less than 5. It will make it easier for the graders if you submit a repo with a gh-pages branch so the HTML page can be viewed online (and you always want to make it easy on graders :-). You should also apply your machine learning algorithm to the 20 test cases available in the test data above. Please submit your predictions in appropriate format to the programming assignment for automated grading. See the programming assignment for additional details.
+
+## Note about Reproducibility
+
+The work, performed in this paper include pseudo-Random processes. In order to make this work reproduceable, we will set seed = 12345. The libraries used and the version are listed below.
+
+```{r libraries}
+
+suppressMessages(library(pROC))
+suppressMessages(library(rpart))
+suppressMessages(library(randomForest))
+suppressMessages(library(rpart.plot))
+##suppressMessages(library(caret))
+##suppressMessages(library(caretEnsemble))
+
+
+
+packageVersion("caret")
+packageVersion("randomForest")
+packageVersion("rpart")
+packageVersion("rpart.plot")
+packageVersion("caretEnsemble")
+packageVersion("pROC")
+
+
+```
+
+
+## Load Data
+Extract data from the Urls provided for this assigment.
+```{r load data}
+urlTrain <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+
+urlTest  <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+Train <- "pml-training.csv"
+
+Test <-  "pml-testing.csv"
+
+
+
+        download.file(urlTrain,Train)
+        pml.train <- read.csv(Train, na.strings=c("NA","#DIV/0!",""))
+
+        download.file(urlTest,Test)
+        pml.test <- read.csv(Test, na.strings=c("NA","#DIV/0!",""))
+```
+
+## Data cleaning
+We need to remove cases in which most of the data that has many null or zero values.  
+
+```{r data cleaning and subsetting}
+pml.train <- pml.train[,colSums(is.na(pml.train)) == 0]
+pml.train   <-pml.train[,-c(1:7)]
+pml.test <- pml.test[,colSums(is.na(pml.test)) == 0]
+pml.test   <-pml.test[,-c(1:7)]
+
+```
+
+
+
+## Split Data
+Now to split our dataset into train and test set. Using the function createDataPartition from the caret package in order to cross validate  our methods. 
+
+```{r split data}
+set.seed(12345)
+
+train <- createDataPartition(pml.train$classe, p=0.7, list=FALSE)
+trainset <- pml.train[train,]
+testset  <- pml.train[-train,]
+dim(trainset)
+dim(testset)
+```
+
+
+
+## Training models 
+With the final dataset, we need to train different models to find which model makes the best predictions. Since we have many variables we will use PCA analysis in order to reduce the number of variables in the model, given that many of the variables are highly correlated. Also want to ensure we are not overfitting, for this we will perform cross validation on the training 5-fold.
+
+```{r pre processing}
+tc <- trainControl( verboseIter=FALSE , preProcOptions="pca", allowParallel=TRUE)
+loggrid <- expand.grid(nIter = 40)
+```
+
+To the model, we will be using Random Foresand Logit Boosted preprocessing for the following prediction algorithms. Using different methods will help to identify if we can make better predictions by combining more than one method.
+
+```{r train models}
+rf <- randomForest(classe ~ ., data = trainset,method="class", importance = TRUE, ntrees = 10)
+lgb <- train(classe ~ ., data = trainset, method = "LogitBoost", trControl = tc, tuneGrid =loggrid )
+
+```
+
+```{r predict model}
+##Prediction Train
+rfpred <- predict(rf,trainset)
+lgbpred <- predict(lgb,trainset)
+
+##Prediction Test
+rfpredt <- predict(rf,testset)
+lgbpredt <- predict(lgb,testset)
+
+```
+
+Combine the models to make more accurate predictions.
+
+```{r Combined model}
+combined_test <- data.frame(rfpredt,lgbpredt, classe = testset$classe)
+
+combined <- train(classe ~ ., data=combined_test, method ="rf")
+combinedpredt <- predict(combined, combined_test)
+
+
+```
+
+Compare the results for the different models used
+
+```{r accuracy of the model}
+confusionMatrix(rfpredt,testset$classe)$overall['Accuracy']
+confusionMatrix(lgbpredt,testset$classe)$overall['Accuracy']
+max(combined$results$Accuracy)
+```
+
+We can observe that Random Forest and Ensemble outperform Logit regression. We will use Random Forest for simplicity, due to the interpretability of the model.
+
+```{r make prediction on the test set}
+rfPred <- predict(rf,pml.test)
+```
+
+Function to store the results
+
+```{r apply function}
+pml_write_files = function(x){
+        n = length(x)
+        for(i in 1:n){
+                filename = paste0("problem_id_",i,".txt")
+                write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+        }
+}
+
+pml_write_files(rfPred)
+```
+
+
+## Conclusion
+
+Random forest model yielded outstanding accuracy.  The results were almost 100% in the validation and test set.
+s
